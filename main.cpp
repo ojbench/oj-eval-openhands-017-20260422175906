@@ -2,6 +2,7 @@
 #include <string>
 #include <cstring>
 #include <cctype>
+#include <cstdio>
 using namespace std;
 
 struct User {
@@ -35,8 +36,9 @@ static inline void set_cstr(char *dst, size_t cap, const string &s){
 // Simple tokenizer for key-value pairs like: cmd -k val -x val
 struct Cmd {
     string name;
-    // fixed keys we care about for user subsystem
-    string c,u,p,n,m,g;
+    // parameters (reused across commands)
+    string c,u,p,n,m,g; // user and common
+    string i,x,t,o,d,y,s; // train related
 };
 
 Cmd parse_line(const string &line){
@@ -72,6 +74,13 @@ Cmd parse_line(const string &line){
                 case 'n': cmd.n=val; break;
                 case 'm': cmd.m=val; break;
                 case 'g': cmd.g=val; break;
+                case 'i': cmd.i=val; break;
+                case 'x': cmd.x=val; break;
+                case 't': cmd.t=val; break;
+                case 'o': cmd.o=val; break;
+                case 'd': cmd.d=val; break;
+                case 'y': cmd.y=val; break;
+                case 's': cmd.s=val; break;
                 default: break;
             }
         }else{
