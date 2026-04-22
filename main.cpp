@@ -152,9 +152,38 @@ Cmd parse_line(const string &line){
     return cmd;
 }
 
+static const char *USERS_FILE = "users.dat";
+
+static void load_users(){
+    FILE *fp = fopen(USERS_FILE, "rb");
+    if(!fp){ user_cnt = 0; return; }
+    char sig[4];
+    if(fread(sig,1,4,fp)!=4){ fclose(fp); user_cnt=0; return; }
+    if(sig[0]!='U'||sig[1]!='S'||sig[2]!='R'||sig[3]!='1'){ fclose(fp); user_cnt=0; return; }
+    int cnt=0; if(fread(&cnt, sizeof(int),1,fp)!=1){ fclose(fp); user_cnt=0; return; }
+    if(cnt<0 || cnt>MAX_USERS){ fclose(fp); user_cnt=0; return; }
+    size_t need = sizeof(User)*cnt;
+    if(fread(users, sizeof(User), cnt, fp)!=(size_t)cnt){ fclose(fp); user_cnt=0; return; }
+    fclose(fp);
+    user_cnt = cnt;
+    for(int i=0;i<user_cnt;i++) users[i].logged_in = false; // reset online states
+}
+
+static void save_users(){
+    FILE *fp = fopen(USERS_FILE, "wb");
+    if(!fp) return;
+    char sig[4]={'U','S','R','1'};
+    fwrite(sig,1,4,fp);
+    fwrite(&user_cnt, sizeof(int),1,fp);
+    if(user_cnt>0) fwrite(users, sizeof(User), user_cnt, fp);
+    fclose(fp);
+}
+
 int main(){
     ios::sync_with_stdio(false);
     cin.tie(nullptr);
+
+    load_users();
 
     string line;
     while (std::getline(cin, line)){
@@ -177,6 +206,7 @@ int main(){
                 set_cstr(nu.mail, sizeof(nu.mail), cmd.m);
                 nu.privilege = 10;
                 nu.used = true; nu.logged_in=false;
+                save_users();
                 cout << 0 << '\n';
             }else{
                 // need -c logged in and new g < c.priv
@@ -196,6 +226,7 @@ int main(){
                 set_cstr(nu.mail, sizeof(nu.mail), cmd.m);
                 nu.privilege = ng;
                 nu.used = true; nu.logged_in=false;
+                save_users();
                 cout << 0 << '\n';
             }
         } else if(name=="login"){
@@ -234,11 +265,13 @@ int main(){
             if(!cmd.p.empty()) set_cstr(users[iu].password, sizeof(users[iu].password), cmd.p);
             if(!cmd.n.empty()) set_cstr(users[iu].name, sizeof(users[iu].name), cmd.n);
             if(!cmd.m.empty()) set_cstr(users[iu].mail, sizeof(users[iu].mail), cmd.m);
+            save_users();
             cout << users[iu].username << ' ' << users[iu].name << ' ' << users[iu].mail << ' ' << users[iu].privilege << '\n';
         } else if(name=="clean"){
             // clear all data
             memset(users, 0, sizeof(users));
             user_cnt = 0;
+            save_users();
             cout << 0 << '\n';
         } else if(name=="add_train"){
             // minimal parse and store, without validation robustly
@@ -250,11 +283,27 @@ int main(){
                 memset(&tr, 0, sizeof(tr));
                 set_cstr(tr.id, sizeof(tr.id), cmd.i);
                 // parse stationNum -n, seatNum -m, stations -s, prices -p, startTime -x, travelTimes -t, stopoverTimes -o, saleDate -d, type -y
-                // For minimal functionality, only store s, x, d, y and stationNum
+                // For minimal functionality, store s, x, d, y, stationNum, seatNum, prices
                 // stations
                 string ps[128]; int pc=0; split_pipe_to_array(cmd.s, ps, pc);
                 tr.stationNum = pc>0?pc:0;
                 for(int i=0;i<pc && i<105;i++) set_cstr(tr.stations[i], sizeof(tr.stations[i]), ps[i]);
+                // seat num
+                tr.seatNum = cmd.m.empty()?0:parse_int(cmd.m);
+                // prices
+                string pz[128]; int pzc=0; split_pipe_to_array(cmd.p, pz, pzc);
+                for(int i=0;i<pzc && i<104;i++) tr.prices[i+1] = parse_int(pz[i]);
+                // travel times
+                string tv[128]; int tvc=0; split_pipe_to_array(cmd.t, tv, tvc);
+                for(int i=0;i<tvc && i<104;i++) tr.travel[i+1] = parse_int(tv[i]);
+                // stopover times
+                if(cmd.o != "_"){
+                    string so[128]; int soc=0; split_pipe_to_array(cmd.o, so, soc);
+                    for(int i=0;i<soc && i<103;i++) tr.stop[i+2] = parse_int(so[i]);
+                } else {
+                    // underscore means no stopovers (2 stations)
+                    memset(tr.stop, 0, sizeof(tr.stop));
+                }
                 // start time
                 if(cmd.x.size()==5){ tr.start_hr = (cmd.x[0]-'0')*10+(cmd.x[1]-'0'); tr.start_mi=(cmd.x[3]-'0')*10+(cmd.x[4]-'0'); }
                 // sale date
@@ -276,15 +325,44 @@ int main(){
                 int di = date_to_index(cmd.d);
                 if(di<tr.sale_l || di>tr.sale_r){ cout<<-1<<'\n'; }
                 else {
+                    // compute cumulative price and times
+                    int cum_price[110]={0};
+                    for(int i=2;i<=tr.stationNum;i++) cum_price[i] = cum_price[i-1] + tr.prices[i-1];
+                    int arr_off[110]={0};
+                    int dep_off[110]={0};
+                    dep_off[1] = 0;
+                    for(int i=2;i<=tr.stationNum;i++){
+                        int j=i-1;
+                        // arrive at station i after departing station j
+                        int prev_dep = dep_off[j];
+                        int arr = prev_dep + tr.travel[j];
+                        arr_off[i] = arr;
+                        if(i < tr.stationNum){
+                            // leave after stopover at station i
+                            dep_off[i] = arr + tr.stop[i];
+                        }
+                    }
+                    auto fmt_time = [&](int offset){
+                        int base_min = tr.start_hr*60 + tr.start_mi + offset;
+                        int day_off = base_min / (24*60);
+                        int day_min = base_min % (24*60);
+                        if(day_min<0){ day_min += 24*60; day_off--; }
+                        char ddbuf[6]; index_to_date(di + day_off, ddbuf);
+                        int hr = day_min/60; int mi = day_min%60;
+                        char tbuf[6]; sprintf(tbuf, "%02d:%02d", hr, mi);
+                        string out = string(ddbuf) + " " + string(tbuf);
+                        return out;
+                    };
+
                     cout << tr.id << ' ' << tr.type << '\n';
-                    // simplistic: show stations with x for times and 0/ x for seats
-                    for(int i=0;i<tr.stationNum;i++){
-                        if(i==0){
-                            cout << tr.stations[i] << ' ' << "xx-xx xx:xx" << " -> " << cmd.d << ' ' << (tr.start_hr<10?"0":"") << tr.start_hr << ':' << (tr.start_mi<10?"0":"") << tr.start_mi << ' ' << 0 << ' ' << 0 << "\n";
-                        }else if(i==tr.stationNum-1){
-                            cout << tr.stations[i] << ' ' << cmd.d << ' ' << (tr.start_hr<10?"0":"") << tr.start_hr << ':' << (tr.start_mi<10?"0":"") << tr.start_mi << " -> " << "xx-xx xx:xx" << ' ' << 0 << ' ' << 'x' << "\n";
+                    for(int i=1;i<=tr.stationNum;i++){
+                        cout << tr.stations[i-1] << ' ';
+                        if(i==1){
+                            cout << "xx-xx xx:xx" << " -> " << fmt_time(0) << ' ' << 0 << ' ' << tr.seatNum << "\n";
+                        }else if(i==tr.stationNum){
+                            cout << fmt_time(arr_off[i]) << " -> " << "xx-xx xx:xx" << ' ' << cum_price[i] << ' ' << 'x' << "\n";
                         }else{
-                            cout << tr.stations[i] << ' ' << cmd.d << ' ' << (tr.start_hr<10?"0":"") << tr.start_hr << ':' << (tr.start_mi<10?"0":"") << tr.start_mi << " -> " << cmd.d << ' ' << (tr.start_hr<10?"0":"") << tr.start_hr << ':' << (tr.start_mi<10?"0":"") << tr.start_mi << ' ' << 0 << ' ' << 0 << "\n";
+                            cout << fmt_time(arr_off[i]) << " -> " << fmt_time(dep_off[i]) << ' ' << cum_price[i] << ' ' << tr.seatNum << "\n";
                         }
                     }
                 }
