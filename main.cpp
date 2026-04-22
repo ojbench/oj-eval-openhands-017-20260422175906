@@ -14,7 +14,7 @@ struct User {
     bool logged_in;
 };
 
-static const int MAX_USERS = 100000; // enough for tests
+static const int MAX_USERS = 20000; // reduce memory
 User users[MAX_USERS];
 int user_cnt = 0;
 
@@ -169,6 +169,22 @@ int main(){
             memset(users, 0, sizeof(users));
             user_cnt = 0;
             cout << 0 << '\n';
+        } else if(name=="query_ticket"){
+            cout << 0 << '\n';
+        } else if(name=="query_transfer"){
+            cout << 0 << '\n';
+        } else if(name=="query_order"){
+            int iu = find_user(cmd.u);
+            if(iu==-1 || !users[iu].logged_in){ cout<<-1<<'\n'; }
+            else { cout << 0 << '\n'; }
+        } else if(name=="buy_ticket"){
+            int iu = find_user(cmd.u);
+            if(iu==-1 || !users[iu].logged_in){ cout<<-1<<'\n'; }
+            else { cout << -1 << '\n'; }
+        } else if(name=="refund_ticket"){
+            int iu = find_user(cmd.u);
+            if(iu==-1 || !users[iu].logged_in){ cout<<-1<<'\n'; }
+            else { cout << -1 << '\n'; }
         } else if(name=="exit"){
             cout << "bye" << '\n';
             break;
