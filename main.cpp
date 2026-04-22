@@ -19,6 +19,68 @@ static const int MAX_USERS = 20000; // reduce memory
 User users[MAX_USERS];
 int user_cnt = 0;
 
+// Train subsystem (minimal for query_train)
+struct Train {
+    char id[21];
+    int stationNum;
+    char stations[105][16];
+    int seatNum;
+    int prices[105]; // size stationNum-1, 1-indexed for ease
+    int start_hr, start_mi;
+    int travel[105]; // size stationNum-1
+    int stop[105];   // size stationNum-2
+    int sale_l; // day index from 06-01
+    int sale_r;
+    char type;
+    bool released;
+    bool used;
+};
+static const int MAX_TRAINS = 3000;
+Train trains[MAX_TRAINS];
+int train_cnt = 0;
+
+int find_train(const string &tid){
+    for(int i=0;i<train_cnt;i++) if(trains[i].used && strcmp(trains[i].id, tid.c_str())==0) return i;
+    return -1;
+}
+
+static inline int parse_int(const string &s){
+    int v=0; int sign=1; size_t i=0; if(i<s.size() && s[i]=='-'){ sign=-1; i++; }
+    for(; i<s.size(); ++i){ char c=s[i]; if(c<'0'||c>'9') break; v = v*10 + (c-'0'); }
+    return v*sign;
+}
+
+static inline void split_pipe_to_array(const string &s, string *arr, int &cnt){
+    cnt = 0;
+    size_t i=0; size_t n=s.size();
+    while(i<=n){
+        size_t j=i;
+        while(j<n && s[j] != '|') j++;
+        arr[cnt++] = s.substr(i, j-i);
+        if(j==n) break;
+        i = j+1;
+        if(cnt>=200) break;
+    }
+}
+
+static inline int date_to_index(const string &md){
+    // format mm-dd
+    if(md.size()<5) return -1;
+    int mm = (md[0]-'0')*10 + (md[1]-'0');
+    int dd = (md[3]-'0')*10 + (md[4]-'0');
+    int base=0;
+    if(mm==6) base=0; else if(mm==7) base=30; else if(mm==8) base=61; else return -1;
+    return base + (dd-1);
+}
+
+static inline void index_to_date(int idx, char *buf){
+    int mm=6; int dd=1; int t=idx;
+    if(t<30){ mm=6; dd = t+1; }
+    else if(t<61){ mm=7; dd = (t-30)+1; }
+    else { mm=8; dd = (t-61)+1; }
+    sprintf(buf, "%02d-%02d", mm, dd);
+}
+
 int find_user(const string &u){
     for(int i=0;i<user_cnt;i++){
         if(users[i].used && strcmp(users[i].username, u.c_str())==0) return i;
@@ -178,6 +240,59 @@ int main(){
             memset(users, 0, sizeof(users));
             user_cnt = 0;
             cout << 0 << '\n';
+        } else if(name=="add_train"){
+            // minimal parse and store, without validation robustly
+            if(cmd.i.empty()) { cout<<-1<<'\n'; }
+            else if(find_train(cmd.i)!=-1){ cout<<-1<<'\n'; }
+            else if(train_cnt>=MAX_TRAINS){ cout<<-1<<'\n'; }
+            else {
+                Train &tr = trains[train_cnt++];
+                memset(&tr, 0, sizeof(tr));
+                set_cstr(tr.id, sizeof(tr.id), cmd.i);
+                // parse stationNum -n, seatNum -m, stations -s, prices -p, startTime -x, travelTimes -t, stopoverTimes -o, saleDate -d, type -y
+                // For minimal functionality, only store s, x, d, y and stationNum
+                // stations
+                string ps[128]; int pc=0; split_pipe_to_array(cmd.s, ps, pc);
+                tr.stationNum = pc>0?pc:0;
+                for(int i=0;i<pc && i<105;i++) set_cstr(tr.stations[i], sizeof(tr.stations[i]), ps[i]);
+                // start time
+                if(cmd.x.size()==5){ tr.start_hr = (cmd.x[0]-'0')*10+(cmd.x[1]-'0'); tr.start_mi=(cmd.x[3]-'0')*10+(cmd.x[4]-'0'); }
+                // sale date
+                string dd[4]; int dc=0; split_pipe_to_array(cmd.d, dd, dc);
+                if(dc>=2){ tr.sale_l = date_to_index(dd[0]); tr.sale_r = date_to_index(dd[1]); }
+                tr.type = cmd.y.empty()? 'G' : cmd.y[0];
+                tr.released = false; tr.used=true;
+                cout << 0 << '\n';
+            }
+        } else if(name=="release_train"){
+            int it = find_train(cmd.i);
+            if(it==-1 || trains[it].released==true){ cout<<-1<<'\n'; }
+            else { trains[it].released = true; cout<<0<<'\n'; }
+        } else if(name=="query_train"){
+            int it = find_train(cmd.i);
+            if(it==-1){ cout<<-1<<'\n'; }
+            else {
+                Train &tr = trains[it];
+                int di = date_to_index(cmd.d);
+                if(di<tr.sale_l || di>tr.sale_r){ cout<<-1<<'\n'; }
+                else {
+                    cout << tr.id << ' ' << tr.type << '\n';
+                    // simplistic: show stations with x for times and 0/ x for seats
+                    for(int i=0;i<tr.stationNum;i++){
+                        if(i==0){
+                            cout << tr.stations[i] << ' ' << "xx-xx xx:xx" << " -> " << cmd.d << ' ' << (tr.start_hr<10?"0":"") << tr.start_hr << ':' << (tr.start_mi<10?"0":"") << tr.start_mi << ' ' << 0 << ' ' << 0 << "\n";
+                        }else if(i==tr.stationNum-1){
+                            cout << tr.stations[i] << ' ' << cmd.d << ' ' << (tr.start_hr<10?"0":"") << tr.start_hr << ':' << (tr.start_mi<10?"0":"") << tr.start_mi << " -> " << "xx-xx xx:xx" << ' ' << 0 << ' ' << 'x' << "\n";
+                        }else{
+                            cout << tr.stations[i] << ' ' << cmd.d << ' ' << (tr.start_hr<10?"0":"") << tr.start_hr << ':' << (tr.start_mi<10?"0":"") << tr.start_mi << " -> " << cmd.d << ' ' << (tr.start_hr<10?"0":"") << tr.start_hr << ':' << (tr.start_mi<10?"0":"") << tr.start_mi << ' ' << 0 << ' ' << 0 << "\n";
+                        }
+                    }
+                }
+            }
+        } else if(name=="delete_train"){
+            int it = find_train(cmd.i);
+            if(it==-1 || trains[it].released){ cout<<-1<<'\n'; }
+            else { trains[it].used=false; cout<<0<<'\n'; }
         } else if(name=="query_ticket"){
             cout << 0 << '\n';
         } else if(name=="query_transfer"){
